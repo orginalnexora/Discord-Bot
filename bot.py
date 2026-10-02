@@ -51,24 +51,31 @@ def is_owner(user) -> bool:
     return user.id == OWNER_ID
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
-SUB_KEYWORDS = ["subscribe", "subscribed", "abone"]
-LIKE_KEYWORDS = ["like", "liked", "beğen"]
-COMMENT_KEYWORDS = ["comment", "commented", "yorum"]
+SUB_KEYWORDS     = ["subscribe", "subscribed", "abone ol", "abone olundu"]
+LIKE_KEYWORDS    = ["like", "liked", "beğen"]
+# Real comment indicators: Reply button only appears under actual posted comments
+# "Yorum ekleyin" is just a placeholder — we ignore it
+COMMENT_KEYWORDS = ["yanıtla", "reply", "yanıtlar", "replies"]
 
 def analyse_image_ocr(image_bytes: bytes, channel_name: str) -> dict:
-    """Run OCR and check for channel name + subscribe + like + comment."""
+    """Run OCR and check for channel name + subscribe + like + real comment."""
     if not OCR_AVAILABLE:
         return {"ocr": False, "channel": False, "subscribe": False, "like": False, "comment": False}
     try:
         img = Image.open(io.BytesIO(image_bytes))
         text = pytesseract.image_to_string(img, lang="tur+eng").lower()
+
+        # Real comment = "yanıtla" or "reply" button visible (only appears under posted comments)
+        # "Yorum ekleyin" is just the input placeholder — ignored
+        comment_ok = any(k in text for k in COMMENT_KEYWORDS)
+
         return {
             "ocr": True,
             "text": text[:500],
             "channel":   channel_name.lower() in text if channel_name else True,
             "subscribe": any(k in text for k in SUB_KEYWORDS),
             "like":      any(k in text for k in LIKE_KEYWORDS),
-            "comment":   any(k in text for k in COMMENT_KEYWORDS),
+            "comment":   comment_ok,
         }
     except Exception as e:
         print(f"[OCR ERROR] {e}")
@@ -295,12 +302,23 @@ async def set_role(ctx, role: discord.Role = None):
 @owner_only()
 async def set_channel(ctx, *, channel_name: str = None):
     if channel_name is None:
-        await ctx.send("❌ Usage: `!setchannel KanalAdı`")
+        await ctx.send("❌ Usage: `!setchannel ChannelName`")
         return
     cfg = load_config()
     cfg.setdefault(str(ctx.guild.id), {})["channel_name"] = channel_name
     save_config(cfg)
     await ctx.send(f"✅ Channel name set to **{channel_name}** — bot will look for this in screenshots.")
+
+@bot.command(name="setyoutubename")
+@owner_only()
+async def set_youtube_name(ctx, *, name: str = None):
+    if name is None:
+        await ctx.send("❌ Usage: `!setyoutubename YouTubeKullanıcıAdı`")
+        return
+    cfg = load_config()
+    cfg.setdefault(str(ctx.guild.id), {})["youtube_name"] = name
+    save_config(cfg)
+    await ctx.send(f"✅ YouTube username set to **{name}** — bot will check this name appears next to comments.")
 
 @bot.command(name="settings")
 @owner_only()
