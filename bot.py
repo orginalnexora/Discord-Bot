@@ -42,121 +42,40 @@ try:
     OWNER_ID = int(_owner_id_raw)
 except ValueError:
     OWNER_ID = 0
-    print(f"[WARN] OWNER_ID geçersiz: '{_owner_id_raw}' — .env dosyasını kontrol et!")
+    print(f"[WARN] OWNER_ID invalid: '{_owner_id_raw}' — check your .env!")
 
 def is_owner(user) -> bool:
     if OWNER_ID == 0:
-        print("[WARN] OWNER_ID ayarlanmamış! .env'e Discord ID'ni ekle.")
+        print("[WARN] OWNER_ID not set! Add your Discord ID to .env")
         return False
     return user.id == OWNER_ID
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
-SUB_KEYWORDS = [
-    "subscribe", "subscribed", "abone",
-    "like", "liked",
-    "comment", "commented", "yorum",
-]
+SUB_KEYWORDS = ["subscribe", "subscribed", "abone"]
+LIKE_KEYWORDS = ["like", "liked", "beğen"]
+COMMENT_KEYWORDS = ["comment", "commented", "yorum"]
 
-def analyse_image_ocr(image_bytes: bytes) -> dict:
+def analyse_image_ocr(image_bytes: bytes, channel_name: str) -> dict:
+    """Run OCR and check for channel name + subscribe + like + comment."""
     if not OCR_AVAILABLE:
-        return {"ocr": False, "found": [], "text": ""}
+        return {"ocr": False, "channel": False, "subscribe": False, "like": False, "comment": False}
     try:
         img = Image.open(io.BytesIO(image_bytes))
         text = pytesseract.image_to_string(img, lang="tur+eng").lower()
-        found = [kw for kw in SUB_KEYWORDS if kw in text]
-        return {"ocr": True, "found": found, "text": text[:500]}
+        return {
+            "ocr": True,
+            "text": text[:500],
+            "channel":   channel_name.lower() in text if channel_name else True,
+            "subscribe": any(k in text for k in SUB_KEYWORDS),
+            "like":      any(k in text for k in LIKE_KEYWORDS),
+            "comment":   any(k in text for k in COMMENT_KEYWORDS),
+        }
     except Exception as e:
         print(f"[OCR ERROR] {e}")
-        return {"ocr": False, "found": [], "text": ""}
+        return {"ocr": False, "channel": False, "subscribe": False, "like": False, "comment": False}
 
 def is_image(attachment: discord.Attachment) -> bool:
     return attachment.content_type is not None and attachment.content_type.startswith("image/")
-
-# ─── Approval View ────────────────────────────────────────────────────────────
-class ApprovalView(discord.ui.View):
-    def __init__(self, submitter_id: int, guild_id: int):
-        super().__init__(timeout=None)
-        self.submitter_id = submitter_id
-        self.guild_id = guild_id
-
-    @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.success, custom_id="approve_btn")
-    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_owner(interaction.user):
-            await interaction.response.send_message("❌ Only the bot owner can use this.", ephemeral=True)
-            return
-
-        cfg = load_config()
-        role_id = cfg.get(str(self.guild_id), {}).get("role_id")
-        guild = interaction.guild
-        role = guild.get_role(int(role_id)) if role_id else None
-
-        member = guild.get_member(self.submitter_id)
-        if member is None:
-            try:
-                member = await guild.fetch_member(self.submitter_id)
-            except Exception:
-                await interaction.response.send_message("⚠️ Member not found.", ephemeral=True)
-                return
-
-        if role:
-            try:
-                await member.add_roles(role, reason="Subscription screenshot approved")
-            except discord.Forbidden:
-                await interaction.response.send_message("❌ Missing permissions to assign role.", ephemeral=True)
-                return
-
-        try:
-            await member.send(
-                f"✅ **Your subscription screenshot has been approved!**\n"
-                f"Server: **{guild.name}**\n"
-                + (f"Role assigned: **{role.name}**" if role else "")
-            )
-        except discord.Forbidden:
-            pass
-
-        embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
-        embed.color = discord.Color.green()
-        embed.set_footer(text=f"✅ Approved by {interaction.user} • {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-        for child in self.children:
-            child.disabled = True
-
-        await interaction.message.edit(embed=embed, view=self)
-        await interaction.response.send_message(f"✅ {member.mention} approved and notified.", ephemeral=True)
-
-    @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger, custom_id="reject_btn")
-    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_owner(interaction.user):
-            await interaction.response.send_message("❌ Only the bot owner can use this.", ephemeral=True)
-            return
-
-        guild = interaction.guild
-        member = guild.get_member(self.submitter_id)
-        if member is None:
-            try:
-                member = await guild.fetch_member(self.submitter_id)
-            except Exception:
-                member = None
-
-        if member:
-            try:
-                await member.send(
-                    f"❌ **Your subscription screenshot was rejected.**\n"
-                    f"Server: **{guild.name}**\n"
-                    f"Please send a valid screenshot showing: subscribe + like + comment."
-                )
-            except discord.Forbidden:
-                pass
-
-        embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
-        embed.color = discord.Color.red()
-        embed.set_footer(text=f"❌ Rejected by {interaction.user} • {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-        for child in self.children:
-            child.disabled = True
-
-        await interaction.message.edit(embed=embed, view=self)
-        await interaction.response.send_message(
-            f"❌ {member.mention if member else 'User'} rejected and notified.", ephemeral=True
-        )
 
 # ─── Events ───────────────────────────────────────────────────────────────────
 @bot.event
@@ -164,15 +83,11 @@ async def on_ready():
     print(f"[BOT] Logged in as {bot.user}")
     print(f"[BOT] Owner ID: {OWNER_ID}")
     print(f"[BOT] OCR: {'Enabled' if OCR_AVAILABLE else 'Disabled'}")
-    print(f"[BOT] Prefix: !")
-    bot.add_view(ApprovalView(submitter_id=0, guild_id=0))
 
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
-
-    # DM guard
     if message.guild is None:
         await bot.process_commands(message)
         return
@@ -182,7 +97,6 @@ async def on_message(message: discord.Message):
     cfg = load_config()
     guild_cfg = cfg.get(str(message.guild.id), {})
     submit_channel_id = guild_cfg.get("submit_channel_id")
-    log_channel_id = guild_cfg.get("log_channel_id")
 
     if (
         submit_channel_id
@@ -191,67 +105,151 @@ async def on_message(message: discord.Message):
     ):
         images = [a for a in message.attachments if is_image(a)]
         if images:
-            await process_submission(message, images[0], log_channel_id)
+            await process_submission(message, images[0], guild_cfg)
+            return  # don't process commands for image submissions
 
     await bot.process_commands(message)
 
 @bot.event
 async def on_command_error(ctx, error):
-    """Catch and display command errors in console."""
     if isinstance(error, commands.CheckFailure):
-        return  # Silently ignore access denied
+        return
     print(f"[CMD ERROR] {ctx.command} — {error}")
-    await ctx.send(f"❌ Error: `{error}`", delete_after=8)
 
-async def process_submission(message: discord.Message, attachment: discord.Attachment, log_channel_id):
-    await message.reply(
-        "📸 **Screenshot received!** You'll be notified once it's reviewed.",
-        delete_after=15
-    )
+# ─── Submission Handler ───────────────────────────────────────────────────────
+async def process_submission(message: discord.Message, attachment: discord.Attachment, guild_cfg: dict):
+    guild = message.guild
+    member = message.author
 
+    role_id = guild_cfg.get("role_id")
+    channel_name = guild_cfg.get("channel_name", "")
+    log_channel_id = guild_cfg.get("log_channel_id")
+
+    # Add processing reaction
+    await message.add_reaction("⏳")
+
+    # Read and analyse image
     image_bytes = await attachment.read()
-    ocr_result = analyse_image_ocr(image_bytes)
+    result = analyse_image_ocr(image_bytes, channel_name)
+
+    if not result["ocr"]:
+        # OCR unavailable — auto-approve without analysis
+        await _approve(message, member, guild, role_id, log_channel_id, channel_name, result)
+        return
+
+    # Check results
+    passed = result["subscribe"] and result["like"] and result["comment"]
+    if channel_name:
+        passed = passed and result["channel"]
+
+    if passed:
+        await _approve(message, member, guild, role_id, log_channel_id, channel_name, result)
+    else:
+        await _reject(message, member, guild, log_channel_id, channel_name, result)
+
+async def _approve(message, member, guild, role_id, log_channel_id, channel_name, result):
+    """Give role, react ✅, notify user, log."""
+    # Remove ⏳, add ✅
+    try:
+        await message.remove_reaction("⏳", bot.user)
+    except Exception:
+        pass
+    await message.add_reaction("✅")
+
+    # Give role
+    role = guild.get_role(int(role_id)) if role_id else None
+    if role:
+        try:
+            await member.add_roles(role, reason="Subscription screenshot approved")
+        except discord.Forbidden:
+            print(f"[WARN] Can't assign role to {member}")
+
+    # DM user
+    try:
+        await member.send(
+            f"✅ **Your subscription screenshot was approved!**\n"
+            f"Server: **{guild.name}**\n"
+            + (f"Role assigned: **{role.name}**" if role else "")
+        )
+    except discord.Forbidden:
+        pass
+
+    # Log
+    await _send_log(message, member, guild, log_channel_id, channel_name, result, approved=True, role=role)
+
+async def _reject(message, member, guild, log_channel_id, channel_name, result):
+    """React ❌, DM user with missing items, log."""
+    try:
+        await message.remove_reaction("⏳", bot.user)
+    except Exception:
+        pass
+    await message.add_reaction("❌")
+
+    # Build missing list
+    missing = []
+    if channel_name and not result.get("channel"):
+        missing.append(f"Channel name not found: **{channel_name}**")
+    if not result.get("subscribe"):
+        missing.append("Subscribe not detected")
+    if not result.get("like"):
+        missing.append("Like not detected")
+    if not result.get("comment"):
+        missing.append("Comment not detected")
+
+    try:
+        await member.send(
+            f"❌ **Your subscription screenshot was rejected.**\n"
+            f"Server: **{guild.name}**\n\n"
+            f"**Missing:**\n" + "\n".join(f"• {m}" for m in missing) + "\n\n"
+            f"Please send a new screenshot with all items visible."
+        )
+    except discord.Forbidden:
+        pass
+
+    # Log
+    await _send_log(message, member, guild, log_channel_id, channel_name, result, approved=False, role=None)
+
+async def _send_log(message, member, guild, log_channel_id, channel_name, result, approved, role):
+    """Send result embed to log channel."""
+    if not log_channel_id:
+        return
+    log_channel = guild.get_channel(int(log_channel_id))
+    if not log_channel:
+        return
+
+    color = discord.Color.green() if approved else discord.Color.red()
+    status = "✅ Approved" if approved else "❌ Rejected"
 
     embed = discord.Embed(
-        title="📋 New Subscription Screenshot",
-        color=discord.Color.blurple(),
+        title=f"📋 Subscription Screenshot — {status}",
+        color=color,
         timestamp=datetime.utcnow()
     )
-    embed.set_author(name=str(message.author), icon_url=message.author.display_avatar.url)
-    embed.add_field(name="👤 User", value=message.author.mention, inline=True)
-    embed.add_field(name="🆔 ID", value=str(message.author.id), inline=True)
-    embed.add_field(name="📅 Date", value=discord.utils.format_dt(message.created_at, style="f"), inline=False)
+    embed.set_author(name=str(member), icon_url=member.display_avatar.url)
+    embed.add_field(name="👤 User", value=member.mention, inline=True)
+    embed.add_field(name="🆔 ID", value=str(member.id), inline=True)
 
-    if ocr_result["ocr"]:
-        found = ocr_result["found"]
-        checks = {
-            "Subscribe": any(k in found for k in ["subscribe", "subscribed", "abone"]),
-            "Like":      any(k in found for k in ["like", "liked"]),
-            "Comment":   any(k in found for k in ["comment", "commented", "yorum"]),
-        }
-        check_text = "\n".join(f"{'✅' if v else '❓'} {k}" for k, v in checks.items())
-        embed.add_field(name="🔍 OCR Analysis", value=check_text, inline=False)
-    else:
-        embed.add_field(
-            name="🔍 OCR Analysis",
-            value="⚠️ OCR unavailable — manual review required",
-            inline=False
+    if result.get("ocr"):
+        ch_val = ("✅" if result.get("channel") else "❌") if channel_name else "—"
+        checks = (
+            f"{'✅' if result.get('channel') else '❌'} Channel: {channel_name}\n" if channel_name else ""
+        ) + (
+            f"{'✅' if result.get('subscribe') else '❌'} Subscribe\n"
+            f"{'✅' if result.get('like') else '❌'} Like\n"
+            f"{'✅' if result.get('comment') else '❌'} Comment"
         )
-
-    embed.set_image(url=attachment.url)
-    embed.set_footer(text="Awaiting manual approval...")
-
-    if log_channel_id:
-        log_channel = message.guild.get_channel(int(log_channel_id))
-        if log_channel:
-            view = ApprovalView(submitter_id=message.author.id, guild_id=message.guild.id)
-            await log_channel.send(embed=embed, view=view)
-        else:
-            print(f"[WARN] Log channel {log_channel_id} not found!")
+        embed.add_field(name="🔍 OCR Results", value=checks, inline=False)
     else:
-        print("[WARN] Log channel not set! Use !setlog #channel")
+        embed.add_field(name="🔍 OCR", value="⚠️ OCR unavailable — auto-approved", inline=False)
 
-# ─── Commands ─────────────────────────────────────────────────────────────────
+    if role:
+        embed.add_field(name="🎖️ Role", value=role.mention, inline=False)
+
+    embed.set_image(url=message.attachments[0].url)
+    embed.set_footer(text=f"#{message.channel.name}")
+    await log_channel.send(embed=embed)
+
+# ─── Owner Commands ───────────────────────────────────────────────────────────
 def owner_only():
     async def predicate(ctx):
         if not is_owner(ctx.author):
@@ -293,6 +291,17 @@ async def set_role(ctx, role: discord.Role = None):
     save_config(cfg)
     await ctx.send(f"✅ Subscriber role set to {role.mention}")
 
+@bot.command(name="setchannel")
+@owner_only()
+async def set_channel(ctx, *, channel_name: str = None):
+    if channel_name is None:
+        await ctx.send("❌ Usage: `!setchannel KanalAdı`")
+        return
+    cfg = load_config()
+    cfg.setdefault(str(ctx.guild.id), {})["channel_name"] = channel_name
+    save_config(cfg)
+    await ctx.send(f"✅ Channel name set to **{channel_name}** — bot will look for this in screenshots.")
+
 @bot.command(name="settings")
 @owner_only()
 async def show_settings(ctx):
@@ -302,12 +311,14 @@ async def show_settings(ctx):
     submit_ch = ctx.guild.get_channel(int(guild_cfg["submit_channel_id"])) if guild_cfg.get("submit_channel_id") else None
     log_ch    = ctx.guild.get_channel(int(guild_cfg["log_channel_id"]))    if guild_cfg.get("log_channel_id")    else None
     role      = ctx.guild.get_role(int(guild_cfg["role_id"]))              if guild_cfg.get("role_id")           else None
+    ch_name   = guild_cfg.get("channel_name", "Not set")
 
     embed = discord.Embed(title="⚙️ Bot Settings", color=discord.Color.blurple())
-    embed.add_field(name="📥 Submit Channel",  value=submit_ch.mention if submit_ch else "❌ Not set", inline=False)
-    embed.add_field(name="📋 Log Channel",     value=log_ch.mention    if log_ch    else "❌ Not set", inline=False)
-    embed.add_field(name="🎖️ Subscriber Role", value=role.mention      if role      else "❌ Not set", inline=False)
-    embed.add_field(name="🔍 OCR",             value="✅ Enabled"      if OCR_AVAILABLE else "❌ Disabled", inline=False)
+    embed.add_field(name="📥 Submit Channel",   value=submit_ch.mention if submit_ch else "❌ Not set", inline=False)
+    embed.add_field(name="📋 Log Channel",      value=log_ch.mention    if log_ch    else "❌ Not set", inline=False)
+    embed.add_field(name="🎖️ Subscriber Role",  value=role.mention      if role      else "❌ Not set", inline=False)
+    embed.add_field(name="📺 Channel Name",     value=f"**{ch_name}**",                                inline=False)
+    embed.add_field(name="🔍 OCR",              value="✅ Enabled"      if OCR_AVAILABLE else "❌ Disabled", inline=False)
     await ctx.send(embed=embed)
 
 @bot.command(name="help")
@@ -321,8 +332,8 @@ async def help_cmd(ctx):
         name="📥 How to use",
         value=(
             "1. Send your screenshot to the submission channel\n"
-            "2. Make sure **subscribe + like + comment** are visible\n"
-            "3. Wait for the owner to approve — you'll get a DM"
+            "2. Bot automatically checks for **subscribe + like + comment**\n"
+            "3. ✅ = approved + role given | ❌ = rejected + DM sent"
         ),
         inline=False
     )
@@ -330,9 +341,10 @@ async def help_cmd(ctx):
         embed.add_field(
             name="⚙️ Owner Commands",
             value=(
-                "`!setsubmit #channel` — Set the screenshot submission channel\n"
-                "`!setlog #channel` — Set the mod/log channel\n"
-                "`!setrole @Role` — Set the role given after approval\n"
+                "`!setsubmit #channel` — Set screenshot submission channel\n"
+                "`!setlog #channel` — Set log channel\n"
+                "`!setrole @Role` — Set role given on approval\n"
+                "`!setchannel Name` — Set YouTube channel name to look for\n"
                 "`!settings` — View current settings\n"
                 "`!help` — This menu"
             ),
