@@ -29,6 +29,34 @@ def save_config(data: dict):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
+def init_config_from_env():
+    """Railway her deploy'da config.json'u sıfırlar.
+    Env var'lardan okuyarak config'i yeniden oluşturur."""
+    guild_id = os.getenv("GUILD_ID", "").strip()
+    if not guild_id:
+        return  # GUILD_ID ayarlanmamışsa atla
+
+    cfg = load_config()
+    guild_cfg = cfg.setdefault(guild_id, {})
+    changed = False
+
+    fields = {
+        "submit_channel_id": "SUBMIT_CHANNEL_ID",
+        "log_channel_id":    "LOG_CHANNEL_ID",
+        "role_id":           "ROLE_ID",
+        "channel_name":      "CHANNEL_NAME",
+        "otogec_channel_id": "OTOGEC_CHANNEL_ID",
+    }
+    for key, env in fields.items():
+        val = os.getenv(env, "").strip()
+        if val and guild_cfg.get(key) != val:
+            guild_cfg[key] = val
+            changed = True
+
+    if changed:
+        save_config(cfg)
+        print(f"[CONFIG] Env var'lardan yüklendi → guild {guild_id}")
+
 # ─── Bot setup ────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
 intents.message_content = True
@@ -458,15 +486,18 @@ async def otogec(ctx):
         return
 
     member = ctx.author
+
+    # Zaten rolü varsa sessizce ✅ at, çık
     if role in member.roles:
-        await ctx.send(f"{member.mention} zaten role sahip.", delete_after=3)
+        await ctx.message.add_reaction("✅")
         return
 
     try:
         await member.add_roles(role, reason="Gizli geçiş kodu kullanıldı")
-        await ctx.send(f"✅ {member.mention}", delete_after=3)
+        await ctx.message.add_reaction("✅")
     except discord.Forbidden:
-        pass
+        await ctx.message.add_reaction("❌")
+
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
