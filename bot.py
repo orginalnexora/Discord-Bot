@@ -364,7 +364,16 @@ async def help_cmd(ctx):
                 "`!setrole @Role` — Set role given on approval\n"
                 "`!setchannel Name` — Set YouTube channel name to look for\n"
                 "`!settings` — View current settings\n"
+                "`!otogecayarla #channel` — Set secret bypass channel\n"
                 "`!help` — This menu"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🔓 Gizli Komutlar",
+            value=(
+                "`!otogec` — Ayarlanan kanalda kullanıldığında direkt rol verir\n"
+                "`!otogecayarla #kanal` — Gizli geçiş kanalını ayarla"
             ),
             inline=False
         )
@@ -417,41 +426,28 @@ async def abone_ss_nasil(ctx):
     await ctx.send(embed=embed)
 
 # ─── Gizli Bypass Komutları ───────────────────────────────────────────────────
-@bot.command(name="otogeçabonessayarla")
+@bot.command(name="otogecayarla")
 @owner_only()
 async def otogec_ayarla(ctx, channel: discord.TextChannel = None):
-    """Sadece owner: !otogeç komutunun çalışacağı kanalı ayarla."""
+    """Sadece owner: !otogec komutunun çalışacağı kanalı ayarla."""
     if channel is None:
-        await ctx.send("❌ Kullanım: `!otogeçabonessayarla #kanal`", delete_after=5)
+        await ctx.send("❌ Kullanım: `!otogecayarla #kanal`", delete_after=5)
         return
     cfg = load_config()
     cfg.setdefault(str(ctx.guild.id), {})["otogec_channel_id"] = str(channel.id)
     save_config(cfg)
-    # Komutu sil, gizli kalsın
-    try:
-        await ctx.message.delete()
-    except discord.Forbidden:
-        pass
     await ctx.send(f"✅ Gizli geçiş kanalı **{channel.mention}** olarak ayarlandı.", delete_after=5)
 
-@bot.command(name="otogeç")
+@bot.command(name="otogec")
 async def otogec(ctx):
     """Gizli bypass: ayarlanan kanalda kullanıldığında direkt rol verir."""
     cfg = load_config()
     guild_cfg = cfg.get(str(ctx.guild.id), {}) if ctx.guild else {}
     otogec_ch_id = guild_cfg.get("otogec_channel_id")
 
-    # Komutu her zaman sil (gizli kalsın)
-    try:
-        await ctx.message.delete()
-    except discord.Forbidden:
-        pass
-
-    # Kanal ayarlanmamışsa sessizce çık
     if not otogec_ch_id:
         return
 
-    # Sadece ayarlanan kanalda çalışır
     if ctx.channel.id != int(otogec_ch_id):
         return
 
@@ -462,15 +458,13 @@ async def otogec(ctx):
         return
 
     member = ctx.author
-    # Zaten rolü varsa çık
     if role in member.roles:
         await ctx.send(f"{member.mention} zaten role sahip.", delete_after=3)
         return
 
     try:
         await member.add_roles(role, reason="Gizli geçiş kodu kullanıldı")
-        # Onay mesajı gönder ve hemen sil
-        confirm = await ctx.send(f"✅ {member.mention}", delete_after=3)
+        await ctx.send(f"✅ {member.mention}", delete_after=3)
     except discord.Forbidden:
         pass
 
