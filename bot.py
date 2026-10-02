@@ -371,6 +371,51 @@ async def help_cmd(ctx):
     embed.set_footer(text="Owner commands are only visible to the bot owner.")
     await ctx.send(embed=embed)
 
+@bot.command(name="abonessnasıl")
+async def abone_ss_nasil(ctx):
+    cfg = load_config()
+    guild_cfg = cfg.get(str(ctx.guild.id), {}) if ctx.guild else {}
+    submit_ch_id = guild_cfg.get("submit_channel_id")
+    submit_ch = ctx.guild.get_channel(int(submit_ch_id)) if submit_ch_id and ctx.guild else None
+    ch_name = guild_cfg.get("channel_name", "belirlenen YouTube kanalı")
+
+    embed = discord.Embed(
+        title="📋 Abone SS Nasıl Gönderilir?",
+        color=discord.Color.blurple()
+    )
+    embed.add_field(
+        name="📺 Adım 1 — Abone ol",
+        value=f"**{ch_name}** YouTube kanalına abone ol.",
+        inline=False
+    )
+    embed.add_field(
+        name="👍 Adım 2 — Like at",
+        value="Kanalın herhangi bir videosunu beğen.",
+        inline=False
+    )
+    embed.add_field(
+        name="💬 Adım 3 — Yorum yap",
+        value="Videoya bir yorum bırak. Yorumun **görünür** olduğundan emin ol.",
+        inline=False
+    )
+    embed.add_field(
+        name="📸 Adım 4 — SS al",
+        value=(
+            "Ekran görüntüsünde şunların **hepsi görünür** olmalı:\n"
+            "✅ Abone ol butonu (abone olundu hali)\n"
+            "✅ Like butonu\n"
+            "✅ Yorumun ve altındaki **Yanıtla** butonu"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name=f"📤 Adım 5 — SS gönder",
+        value=f"SS'yi {submit_ch.mention if submit_ch else '**#ss kanalına**'} gönder. Bot otomatik kontrol edecek.",
+        inline=False
+    )
+    embed.set_footer(text="✅ Onaylanırsa rol verilir | ❌ Reddedilirse DM ile bildirim gelir")
+    await ctx.send(embed=embed)
+
 # ─── Run ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN", "").strip()
